@@ -1,0 +1,6 @@
+{
+  "name": "Kruchok",
+  "description": "Генератор продающих текстов для Авито, соцсетей, Telegram и рассылок: 3 готовых варианта за 10 секунд (через боль, выгоду и соцдоказательство).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
