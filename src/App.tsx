@@ -1,63 +1,102 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Send, 
-  Star, 
   Zap, 
-  ArrowRight,
-  ArrowLeft,
-  Clock
+  Clock, 
+  ArrowLeft, 
+  Sparkles, 
+  Copy, 
+  Activity 
 } from 'lucide-react';
 import { Header } from './components/Header';
-import { GeneratorForm } from './components/GeneratorForm';
-import { ResultCard } from './components/ResultCard';
-import { PreviewModal } from './components/PreviewModal';
-import { StarsModal } from './components/StarsModal';
+import { HomeScreen } from './components/HomeScreen';
+import { CreateListingView } from './components/CreateListingView';
+import { ImproveListingView } from './components/ImproveListingView';
+import { ResultView } from './components/ResultView';
+import { MonetizationModal } from './components/MonetizationModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { PRESETS } from './data/presets';
-import { GenerationRequest, TextVariant, HistoryItem } from './types';
+import { 
+  AppScreen, 
+  CreateListingInput, 
+  ImproveListingInput, 
+  ListingResult, 
+  AuditDiagnosis, 
+  HistoryListingItem, 
+  QuickActionType 
+} from './types';
+import { CREATE_PRESETS } from './data/presets';
 
-const DEFAULT_REQUEST: GenerationRequest = PRESETS[0].data;
+const DEFAULT_CREATE_INPUT: CreateListingInput = CREATE_PRESETS[0].data;
 
 export default function App() {
-  const [stars, setStars] = useState<number>(() => {
-    const saved = localStorage.getItem('kruchok_stars') ?? localStorage.getItem('textoff_stars');
-    return saved !== null ? parseInt(saved, 10) : 100;
+  // Navigation
+  const [screen, setScreen] = useState<AppScreen>('home');
+
+  // Quota & Monetization
+  const [remainingGenerations, setRemainingGenerations] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('kruchok_generations');
+      return saved !== null ? parseInt(saved, 10) : 3; // 3 free generations default
+    } catch {
+      return 3;
+    }
   });
 
-  const [view, setView] = useState<'form' | 'result'>('form');
-  const [requestData, setRequestData] = useState<GenerationRequest>(DEFAULT_REQUEST);
-  const [activePresetId, setActivePresetId] = useState<string>(PRESETS[0].id);
-  const [variants, setVariants] = useState<TextVariant[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [countdown, setCountdown] = useState<number>(10);
-  const [previewVariant, setPreviewVariant] = useState<TextVariant | null>(null);
-  const [isStarsModalOpen, setIsStarsModalOpen] = useState<boolean>(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
+  const [isPro, setIsPro] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('kruchok_is_pro') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [isMonetizationOpen, setIsMonetizationOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Latest form state ref to avoid stale closures in MainButton callback
-  const currentFormRef = useRef<GenerationRequest>(DEFAULT_REQUEST);
+  // Active form data refs
+  const [createInput, setCreateInput] = useState<CreateListingInput>(DEFAULT_CREATE_INPUT);
+  const currentCreateRef = useRef<CreateListingInput>(DEFAULT_CREATE_INPUT);
 
-  const [history, setHistory] = useState<HistoryItem[]>(() => {
+  const [improveInput, setImproveInput] = useState<ImproveListingInput>({
+    originalText: '',
+    platform: 'avito',
+  });
+
+  // Active Result & Audit
+  const [activeResult, setActiveResult] = useState<ListingResult | null>(null);
+  const [lastAudit, setLastAudit] = useState<AuditDiagnosis | null>(null);
+
+  // Loading States
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('AI генерирует текст...');
+  const [countdown, setCountdown] = useState(8);
+  const [isQuickActionLoading, setIsQuickActionLoading] = useState(false);
+
+  // History / My Listings
+  const [history, setHistory] = useState<HistoryListingItem[]>(() => {
     try {
-      const saved = localStorage.getItem('kruchok_history') ?? localStorage.getItem('textoff_history');
+      const saved = localStorage.getItem('kruchok_listings');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
 
-  // Save stars
+  // Save Quota
   useEffect(() => {
-    localStorage.setItem('kruchok_stars', stars.toString());
-  }, [stars]);
+    localStorage.setItem('kruchok_generations', remainingGenerations.toString());
+  }, [remainingGenerations]);
 
-  // Save history
   useEffect(() => {
-    localStorage.setItem('kruchok_history', JSON.stringify(history));
+    localStorage.setItem('kruchok_is_pro', isPro ? 'true' : 'false');
+  }, [isPro]);
+
+  // Save History
+  useEffect(() => {
+    localStorage.setItem('kruchok_listings', JSON.stringify(history));
   }, [history]);
 
-  // Toast notification timer
+  // Toast notifier
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -73,15 +112,15 @@ export default function App() {
     }
   }, []);
 
-  // Telegram MainButton reactive hook
+  // Telegram WebApp MainButton integration
   useEffect(() => {
     const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined;
     if (!tg?.MainButton) return;
 
     const mainButton = tg.MainButton;
 
-    if (isLoading) {
-      mainButton.setText(`Генерация (${countdown}с)...`);
+    if (isLoading || isQuickActionLoading) {
+      mainButton.setText(`Обработка (${countdown}с)...`);
       mainButton.showProgress(true);
       mainButton.disable();
       return;
@@ -90,49 +129,49 @@ export default function App() {
     mainButton.hideProgress();
     mainButton.enable();
 
-    if (view === 'form') {
-      mainButton.setText('Сгенерировать 3 варианта');
+    if (screen === 'home') {
+      mainButton.hide();
+    } else if (screen === 'create') {
+      mainButton.setText('Создать продающее объявление');
       mainButton.show();
-    } else {
-      const allUnlocked = variants.length > 0 && variants.every((v) => v.isUnlocked || v.isFree);
-      if (allUnlocked) {
-        mainButton.setText('← Изменить запрос');
-      } else {
-        mainButton.setText('Открыть все за 50 ⭐️');
-      }
+    } else if (screen === 'improve') {
+      mainButton.setText('Улучшить объявление');
+      mainButton.show();
+    } else if (screen === 'result') {
+      mainButton.setText('Скопировать всё ✓');
       mainButton.show();
     }
 
     const onMainBtnClick = () => {
-      if (view === 'form') {
-        const data = currentFormRef.current;
+      if (screen === 'home') {
+        setScreen('create');
+        window.scrollTo(0, 0);
+      } else if (screen === 'create') {
+        const data = currentCreateRef.current;
         if (!data.product.trim()) {
-          try {
-            tg.HapticFeedback?.notificationOccurred('warning');
-          } catch {
-            // ignore
-          }
-          showToast('Укажи, что продаёшь');
+          showToast('Укажи, что ты продаёшь');
           return;
         }
+        handleCreateListing(data);
+      } else if (screen === 'improve') {
+        if (!improveInput.originalText.trim()) {
+          showToast('Вставь текст текущего объявления');
+          return;
+        }
+        // If audit wasn't run yet, run audit or prompt
+        if (!lastAudit) {
+          handleRunAudit(improveInput);
+        } else {
+          handleImproveListing(improveInput, lastAudit);
+        }
+      } else if (screen === 'result' && activeResult) {
+        const full = `${activeResult.titles[activeResult.selectedTitleIndex]?.text || ''}\n\n${activeResult.body}`;
+        navigator.clipboard?.writeText?.(full);
+        showToast('Объявление целиком скопировано ✓');
         try {
-          tg.HapticFeedback?.impactOccurred('medium');
+          tg.HapticFeedback?.notificationOccurred('success');
         } catch {
           // ignore
-        }
-        handleGenerate(data);
-      } else {
-        const allUnlocked = variants.length > 0 && variants.every((v) => v.isUnlocked || v.isFree);
-        if (allUnlocked) {
-          try {
-            tg.HapticFeedback?.selectionChanged();
-          } catch {
-            // ignore
-          }
-          setView('form');
-          window.scrollTo(0, 0);
-        } else {
-          handleUnlockVariants();
         }
       }
     };
@@ -141,13 +180,28 @@ export default function App() {
     return () => {
       mainButton.offClick(onMainBtnClick);
     };
-  }, [view, isLoading, countdown, variants, stars]);
+  }, [screen, isLoading, isQuickActionLoading, countdown, activeResult, improveInput, lastAudit]);
 
-  const handleGenerate = async (reqData: GenerationRequest) => {
+  // Quota decrement checker
+  const checkAndConsumeQuota = (): boolean => {
+    if (isPro) return true;
+    if (remainingGenerations <= 0) {
+      setIsMonetizationOpen(true);
+      showToast('Бесплатные генерации закончились. Пополните баланс.');
+      return false;
+    }
+    setRemainingGenerations((prev) => Math.max(0, prev - 1));
+    return true;
+  };
+
+  // 1. Create Listing
+  const handleCreateListing = async (data: CreateListingInput) => {
+    if (!checkAndConsumeQuota()) return;
+
     setIsLoading(true);
-    setCountdown(10);
-    setRequestData(reqData);
-    currentFormRef.current = reqData;
+    setLoadingText('Создаём продающее объявление...');
+    setCountdown(8);
+    setCreateInput(data);
 
     const timer = setInterval(() => {
       setCountdown((prev) => (prev > 1 ? prev - 1 : 1));
@@ -157,360 +211,392 @@ export default function App() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reqData),
+        body: JSON.stringify({
+          mode: 'create',
+          product: data.product,
+          price: data.price,
+          condition: data.condition,
+          keyBenefits: data.keyBenefits,
+          platform: data.platform,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error('Ошибка сервера');
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Ошибка сервера (${response.status})`);
       }
 
-      const data = await response.json();
-      if (data.variants && Array.isArray(data.variants)) {
-        setVariants(data.variants);
+      const resData = await response.json();
+      if (resData.result) {
+        const newResult: ListingResult = resData.result;
+        setActiveResult(newResult);
 
         // Add to history
-        const newItem: HistoryItem = {
-          id: 'hist-' + Date.now(),
-          createdAt: new Date().toISOString(),
-          request: reqData,
-          variants: data.variants,
-          unlockedVariants: false,
+        const historyItem: HistoryListingItem = {
+          id: newResult.id,
+          product: newResult.product,
+          platform: newResult.platform,
+          createdAt: newResult.createdAt,
+          mode: 'create',
+          result: newResult,
         };
-        setHistory((prev) => [newItem, ...prev.slice(0, 19)]);
+        setHistory((prev) => [historyItem, ...prev.slice(0, 24)]);
 
-        // Switch to result view and reset scroll to top
-        setView('result');
+        setScreen('result');
         window.scrollTo(0, 0);
-
-        showToast('3 варианта готовы!');
+        showToast('Объявление создано!');
         try {
           window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
         } catch {
           // ignore
         }
+      } else {
+        throw new Error('Сервер не вернул результат');
       }
-    } catch (error) {
-      console.error('Ошибка вызова API:', error);
-      showToast('Ошибка связи с сервером');
+    } catch (error: any) {
+      console.error('Ошибка создания объявления:', error);
+      showToast(error.message || 'Ошибка связи с сервисом');
+      try {
+        window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error');
+      } catch {
+        // ignore
+      }
     } finally {
       clearInterval(timer);
       setIsLoading(false);
     }
   };
 
-  const handleApplyPreset = (presetId: string) => {
-    const found = PRESETS.find((p) => p.id === presetId);
-    if (found) {
-      setActivePresetId(presetId);
-      setRequestData(found.data);
-      currentFormRef.current = found.data;
-    }
-  };
-
-  const handleUnlockVariants = () => {
+  // 2. Audit Existing Listing
+  const handleRunAudit = async (data: ImproveListingInput): Promise<AuditDiagnosis | null> => {
+    setImproveInput(data);
     try {
-      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium');
-    } catch {
-      // ignore
-    }
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'audit',
+          originalText: data.originalText,
+          platform: data.platform,
+          price: data.price,
+          productName: data.productName,
+        }),
+      });
 
-    if (stars < 50) {
-      setIsStarsModalOpen(true);
-      return;
-    }
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Ошибка аудита (${response.status})`);
+      }
 
-    // Deduct 50 stars
-    setStars((prev) => Math.max(0, prev - 50));
-    setVariants((prev) =>
-      prev.map((v) => ({
-        ...v,
-        isUnlocked: true,
-      }))
-    );
-    showToast('2-й и 3-й варианты открыты (-50 ⭐️)!');
+      const resData = await response.json();
+      if (resData.audit) {
+        setLastAudit(resData.audit);
+        return resData.audit;
+      }
+      throw new Error('Не удалось получить диагностику');
+    } catch (error: any) {
+      console.error('Ошибка аудита:', error);
+      showToast(error.message || 'Ошибка проведения диагностики');
+      return null;
+    }
+  };
+
+  // 3. Improve Listing (after audit)
+  const handleImproveListing = async (data: ImproveListingInput, audit: AuditDiagnosis) => {
+    if (!checkAndConsumeQuota()) return;
+
+    setIsLoading(true);
+    setLoadingText('Устраняем слабые места и переписываем...');
+    setCountdown(8);
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev > 1 ? prev - 1 : 1));
+    }, 900);
+
     try {
-      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
-    } catch {
-      // ignore
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'improve',
+          originalText: data.originalText,
+          platform: data.platform,
+          price: data.price,
+          product: data.productName || 'Товар из объявления',
+          condition: audit.issues.join(', '),
+        }),
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Ошибка улучшения (${response.status})`);
+      }
+
+      const resData = await response.json();
+      if (resData.result) {
+        const newResult: ListingResult = resData.result;
+        setActiveResult(newResult);
+
+        // Add to history
+        const historyItem: HistoryListingItem = {
+          id: newResult.id,
+          product: newResult.product,
+          platform: newResult.platform,
+          createdAt: newResult.createdAt,
+          mode: 'improve',
+          result: newResult,
+          audit,
+        };
+        setHistory((prev) => [historyItem, ...prev.slice(0, 24)]);
+
+        setScreen('result');
+        window.scrollTo(0, 0);
+        showToast('Объявление улучшено!');
+        try {
+          window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+        } catch {
+          // ignore
+        }
+      } else {
+        throw new Error('Сервер не вернул результат');
+      }
+    } catch (error: any) {
+      console.error('Ошибка улучшения:', error);
+      showToast(error.message || 'Ошибка связи с сервисом');
+      try {
+        window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error');
+      } catch {
+        // ignore
+      }
+    } finally {
+      clearInterval(timer);
+      setIsLoading(false);
     }
   };
 
-  const handleAddStars = (amount: number) => {
-    setStars((prev) => prev + amount);
-    showToast(`Начислено +${amount} ⭐️!`);
+  // 4. Quick Actions («Усилить»)
+  const handleQuickAction = async (action: QuickActionType) => {
+    if (!activeResult || isQuickActionLoading) return;
+
+    setIsQuickActionLoading(true);
+    const activeTitle = activeResult.titles[activeResult.selectedTitleIndex]?.text || activeResult.titles[0]?.text || '';
+
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'refine',
+          action,
+          currentTitle: activeTitle,
+          currentBody: activeResult.body,
+          platform: activeResult.platform,
+          product: activeResult.product,
+        }),
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Ошибка доработки текста');
+      }
+
+      const resData = await response.json();
+      if (resData.result) {
+        const refined = resData.result;
+        setActiveResult(refined);
+
+        // Update in history
+        setHistory((prev) =>
+          prev.map((item) => (item.id === activeResult.id ? { ...item, result: refined } : item))
+        );
+
+        showToast('Текст доработан!');
+        try {
+          window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+        } catch {
+          // ignore
+        }
+      }
+    } catch (error: any) {
+      console.error('Ошибка быстрой доработки:', error);
+      showToast(error.message || 'Не удалось доработать текст');
+    } finally {
+      setIsQuickActionLoading(false);
+    }
   };
 
-  const handleSelectHistoryItem = (item: HistoryItem) => {
-    setRequestData(item.request);
-    currentFormRef.current = item.request;
-    setVariants(item.variants);
-    setActivePresetId('');
-    setIsHistoryOpen(false);
-    setView('result');
+  const handleSelectHistoryItem = (item: HistoryListingItem) => {
+    setActiveResult(item.result);
+    setScreen('result');
     window.scrollTo(0, 0);
-    showToast('Генерация загружена');
+    showToast('Объявление загружено');
   };
 
-  const handleClearHistory = () => {
-    setHistory([]);
-    showToast('История очищена');
+  const handleAddGenerations = (amount: number) => {
+    setRemainingGenerations((prev) => prev + amount);
+    showToast(`Начислено +${amount} генераций!`);
   };
 
-  const allUnlocked = variants.length > 0 && variants.every((v) => v.isUnlocked || v.isFree);
+  const handleActivatePro = () => {
+    setIsPro(true);
+    showToast('Тариф PRO активирован на 30 дней!');
+  };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200 pb-12">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200 pb-16">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed top-14 left-4 right-4 z-50 bg-neutral-900 border border-amber-500/40 text-neutral-100 px-3.5 py-2 rounded-xl shadow-2xl flex items-center justify-center gap-2 text-xs font-medium animate-in fade-in duration-200">
+        <div className="fixed top-15 left-4 right-4 z-50 bg-neutral-900 border border-amber-500/50 text-neutral-100 px-4 py-2.5 rounded-xl shadow-2xl flex items-center justify-center gap-2 text-xs font-semibold animate-in fade-in duration-200">
           <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
           <span className="truncate">{toastMessage}</span>
         </div>
       )}
 
-      {/* Header: Compact single line, 16px padding */}
+      {/* Header */}
       <Header
-        stars={stars}
-        onOpenStarsModal={() => setIsStarsModalOpen(true)}
+        remainingGenerations={remainingGenerations}
+        isPro={isPro}
+        onOpenMonetization={() => setIsMonetizationOpen(true)}
         onOpenHistory={() => setIsHistoryOpen(true)}
         historyCount={history.length}
+        onGoHome={() => {
+          setScreen('home');
+          window.scrollTo(0, 0);
+        }}
       />
 
-      {/* Main Container: Single column, strict mobile viewport (max-w-md, 16px horizontal padding) */}
+      {/* Main View Container */}
       <main className="flex-1 w-full max-w-md mx-auto px-4 py-4 space-y-4">
-        
-        {/* ============================================================ */}
-        {/* STATE 1: FORM VIEW (Only form elements, results completely hidden) */}
-        {/* ============================================================ */}
-        {view === 'form' && (
-          <div className="space-y-4">
-            {/* Functional Title without marketing fluff */}
-            <div className="space-y-1">
-              <h1 className="text-xl font-bold tracking-tight text-white leading-tight">
-                Генератор продающих текстов
-              </h1>
-              <p className="text-xs text-neutral-400 leading-snug">
-                Заполни форму — получи 3 варианта текста
+        {/* Loading Overlay */}
+        {isLoading && (
+          <div className="p-5 rounded-2xl bg-neutral-900/95 border border-amber-500/40 text-center space-y-3 shadow-2xl animate-in fade-in duration-200">
+            <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-500/15 text-amber-400">
+              <Clock className="w-5 h-5 animate-spin" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">{loadingText}</h3>
+              <p className="text-xs text-neutral-400 mt-1">
+                Осталось ~<strong className="text-amber-400 font-mono">{countdown}</strong> сек.
               </p>
             </div>
-
-            {/* Generator Form */}
-            <GeneratorForm
-              onSubmit={(data) => handleGenerate(data)}
-              isLoading={isLoading}
-              activePresetId={activePresetId}
-              onApplyPreset={handleApplyPreset}
-              initialData={requestData}
-              onFormChange={(data) => {
-                currentFormRef.current = data;
-              }}
-            />
-
-            {/* Loading Progress State */}
-            {isLoading && (
-              <div className="p-4 rounded-2xl bg-neutral-900/90 border border-amber-500/40 text-center space-y-2.5 shadow-lg animate-pulse">
-                <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-amber-500/15 text-amber-400">
-                  <Clock className="w-5 h-5 animate-spin" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-white">
-                    Нейросеть генерирует 3 подхода...
-                  </h3>
-                  <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Осталось ~<strong className="text-amber-400 font-mono">{countdown}</strong> сек.
-                  </p>
-                </div>
-                <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className="bg-amber-400 h-full transition-all duration-300 rounded-full"
-                    style={{ width: `${((10 - countdown) / 10) * 100}%` }}
-                  />
-                </div>
-              </div>
-            )}
+            <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
+              <div
+                className="bg-amber-400 h-full transition-all duration-300 rounded-full"
+                style={{ width: `${((8 - countdown) / 8) * 100}%` }}
+              />
+            </div>
           </div>
         )}
 
-        {/* ============================================================ */}
-        {/* STATE 2: RESULT VIEW (Form completely hidden)                */}
-        {/* ============================================================ */}
-        {view === 'result' && (
-          <div className="space-y-4">
-            {/* Top Navigation Bar: Return to Form & Unlock Button */}
-            <div className="flex items-center justify-between gap-2 pb-1 border-b border-neutral-850">
-              <button
-                id="back-to-form-btn"
-                type="button"
-                onClick={() => {
-                  try {
-                    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
-                  } catch {
-                    // ignore
-                  }
-                  setView('form');
-                  window.scrollTo(0, 0);
-                }}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 hover:text-amber-300 py-1.5 px-3 rounded-xl bg-amber-500/10 border border-amber-500/20 active:scale-95 transition-all cursor-pointer"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>← Изменить запрос</span>
-              </button>
+        {/* 1. HOME SCREEN */}
+        {screen === 'home' && !isLoading && (
+          <HomeScreen
+            onSelectCreate={() => {
+              setScreen('create');
+              window.scrollTo(0, 0);
+            }}
+            onSelectImprove={() => {
+              setScreen('improve');
+              window.scrollTo(0, 0);
+            }}
+            remainingGenerations={remainingGenerations}
+            isPro={isPro}
+            onOpenMonetization={() => setIsMonetizationOpen(true)}
+            recentListings={history}
+            onOpenListing={handleSelectHistoryItem}
+            onOpenAllHistory={() => setIsHistoryOpen(true)}
+          />
+        )}
 
-              {!allUnlocked && (
-                <button
-                  id="unlock-all-top-btn"
-                  type="button"
-                  onClick={handleUnlockVariants}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold text-neutral-950 bg-amber-400 hover:bg-amber-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-                >
-                  <Star className="w-3.5 h-3.5 fill-neutral-950 text-neutral-950" />
-                  <span>Открыть все за 50 ⭐️</span>
-                </button>
-              )}
-            </div>
+        {/* 2. CREATE LISTING SCREEN */}
+        {screen === 'create' && !isLoading && (
+          <CreateListingView
+            initialData={createInput}
+            onSubmit={(data) => handleCreateListing(data)}
+            onBack={() => {
+              setScreen('home');
+              window.scrollTo(0, 0);
+            }}
+            isLoading={isLoading}
+            onFormChange={(data) => {
+              currentCreateRef.current = data;
+            }}
+          />
+        )}
 
-            {/* Target Product Summary Chip */}
-            <div className="text-xs text-neutral-400 bg-neutral-900/60 border border-neutral-850 px-3 py-2 rounded-xl flex items-center justify-between gap-2">
-              <span className="truncate">
-                Товар: <strong className="text-neutral-200 font-medium">{requestData.product}</strong>
-              </span>
-              <span className="shrink-0 text-[10px] uppercase font-semibold text-amber-400/90 px-1.5 py-0.5 rounded bg-amber-500/10">
-                {requestData.platform}
-              </span>
-            </div>
+        {/* 3. IMPROVE LISTING SCREEN */}
+        {screen === 'improve' && !isLoading && (
+          <ImproveListingView
+            initialData={improveInput}
+            onAudit={handleRunAudit}
+            onImprove={(data, audit) => handleImproveListing(data, audit)}
+            onBack={() => {
+              setScreen('home');
+              window.scrollTo(0, 0);
+            }}
+            isLoading={isLoading}
+          />
+        )}
 
-            {/* 3 Text Variants (1st free/unlocked, 2nd & 3rd blurred/locked or unlocked) */}
-            <div className="space-y-3.5">
-              {variants.map((variant, index) => (
-                <ResultCard
-                  key={variant.id}
-                  variant={variant}
-                  index={index}
-                  platform={requestData.platform}
-                  onUnlock={handleUnlockVariants}
-                  onPreview={(v) => setPreviewVariant(v)}
-                  userStars={stars}
-                />
-              ))}
-            </div>
-
-            {/* In-page Unlock Button under the 3 variants when locked */}
-            {!allUnlocked && (
-              <div className="pt-1">
-                <button
-                  id="unlock-all-bottom-btn"
-                  type="button"
-                  onClick={handleUnlockVariants}
-                  className="w-full py-3 px-4 rounded-xl font-bold text-sm text-neutral-950 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 active:scale-98 transition-all shadow-md shadow-amber-500/20 cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Star className="w-4 h-4 fill-neutral-950 text-neutral-950" />
-                  <span>Открыть все за 50 ⭐️</span>
-                </button>
-              </div>
-            )}
-
-            {/* Action to change request at the bottom as well */}
-            <div className="text-center pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  try {
-                    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged();
-                  } catch {
-                    // ignore
-                  }
-                  setView('form');
-                  window.scrollTo(0, 0);
-                }}
-                className="text-xs text-neutral-400 hover:text-amber-400 transition-colors cursor-pointer inline-flex items-center gap-1 py-1 px-2"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Вернуться к настройкам текста</span>
-              </button>
-            </div>
-          </div>
+        {/* 4. RESULT SCREEN */}
+        {screen === 'result' && !isLoading && activeResult && (
+          <ResultView
+            result={activeResult}
+            onQuickAction={handleQuickAction}
+            isQuickActionLoading={isQuickActionLoading}
+            onBackToEdit={() => {
+              if (activeResult.mode === 'improve') {
+                setScreen('improve');
+              } else {
+                setScreen('create');
+              }
+              window.scrollTo(0, 0);
+            }}
+            onShowToast={showToast}
+          />
         )}
       </main>
 
-      {/* Fallback fixed bar ONLY rendered in desktop browser preview when Telegram client is absent */}
-      {typeof window !== 'undefined' && window.Telegram?.WebApp?.platform === 'unknown' && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 p-3 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-800">
+      {/* Fallback Desktop Browser Action Bar (Only shown on result screen when Telegram client WebApp is not connected) */}
+      {typeof window !== 'undefined' && window.Telegram?.WebApp?.platform === 'unknown' && screen === 'result' && activeResult && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 p-3 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-850">
           <div className="max-w-md mx-auto">
             <button
               type="button"
-              id="browser-preview-tg-main-button"
-              disabled={isLoading}
               onClick={() => {
-                if (view === 'form') {
-                  const data = currentFormRef.current;
-                  if (!data.product.trim()) {
-                    showToast('Укажи, что продаёшь');
-                    return;
-                  }
-                  handleGenerate(data);
-                } else {
-                  const allUnlocked = variants.length > 0 && variants.every((v) => v.isUnlocked || v.isFree);
-                  if (allUnlocked) {
-                    setView('form');
-                    window.scrollTo(0, 0);
-                  } else {
-                    handleUnlockVariants();
-                  }
-                }
+                const full = `${activeResult.titles[activeResult.selectedTitleIndex]?.text || ''}\n\n${activeResult.body}`;
+                navigator.clipboard?.writeText?.(full);
+                showToast('Скопировано целиком ✓');
               }}
-              className="w-full py-3.5 px-4 rounded-xl font-bold text-sm text-neutral-950 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-amber-500/10 cursor-pointer flex items-center justify-center gap-2"
+              className="w-full py-3.5 px-4 rounded-xl font-bold text-sm text-neutral-950 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 active:scale-98 transition-all shadow-lg shadow-amber-500/20 cursor-pointer flex items-center justify-center gap-2"
             >
-              {isLoading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
-                  <span>Генерация ({countdown}с)...</span>
-                </>
-              ) : view === 'form' ? (
-                <>
-                  <Zap className="w-4 h-4 fill-neutral-950 text-neutral-950" />
-                  <span>Сгенерировать 3 варианта</span>
-                </>
-              ) : (
-                allUnlocked ? (
-                  <>
-                    <ArrowLeft className="w-4 h-4 text-neutral-950" />
-                    <span>← Изменить запрос</span>
-                  </>
-                ) : (
-                  <>
-                    <Star className="w-4 h-4 fill-neutral-950 text-neutral-950" />
-                    <span>Открыть все за 50 ⭐️</span>
-                  </>
-                )
-              )}
+              <Copy className="w-4 h-4 text-neutral-950" />
+              <span>Скопировать всё ✓</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Preview Modal */}
-      <PreviewModal
-        variant={previewVariant}
-        platform={requestData.platform}
-        price={requestData.price}
-        onClose={() => setPreviewVariant(null)}
+      {/* Monetization / Packages Modal */}
+      <MonetizationModal
+        isOpen={isMonetizationOpen}
+        onClose={() => setIsMonetizationOpen(false)}
+        remainingGenerations={remainingGenerations}
+        isPro={isPro}
+        onAddGenerations={handleAddGenerations}
+        onActivatePro={handleActivatePro}
       />
 
-      {/* Stars Modal */}
-      <StarsModal
-        isOpen={isStarsModalOpen}
-        onClose={() => setIsStarsModalOpen(false)}
-        stars={stars}
-        onAddStars={handleAddStars}
-      />
-
-      {/* History Drawer */}
+      {/* History Drawer («Мои объявления») */}
       <HistoryDrawer
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
         history={history}
-        onSelectHistoryItem={handleSelectHistoryItem}
-        onClearHistory={handleClearHistory}
+        onSelectListing={handleSelectHistoryItem}
+        onClearHistory={() => {
+          setHistory([]);
+          showToast('История объявлений очищена');
+        }}
       />
     </div>
   );
